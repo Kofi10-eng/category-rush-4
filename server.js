@@ -2,6 +2,7 @@ const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
 const path = require('path');
+const fs = require('fs');
 let Country, State, City;
 try { ({ Country, State, City } = require('country-state-city')); } catch (e) { Country = State = City = null; }
 
@@ -17,10 +18,76 @@ const RUSH_SECONDS = 5;
 const ROUND_SECONDS = 90;
 
 function list(words) { return new Set(words.split('|').map(w => w.trim().toLowerCase()).filter(Boolean)); }
-function clean(value) { return String(value || '').trim().replace(/\s+/g, ' ').toLowerCase(); }
+function clean(value) { return String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().replace(/\s+/g, ' ').toLowerCase(); }
 function strip(value) { return clean(value).replace(/[^a-z0-9\s'-]/g, ''); }
 function titleCase(value) { return String(value || '').trim().replace(/\w\S*/g, t => t[0].toUpperCase() + t.slice(1).toLowerCase()); }
 function canonical(value) { return strip(value).replace(/\s+/g, ' '); }
+
+function addWords(targetSet, values) {
+  if (!values) return;
+  if (Array.isArray(values)) values.forEach(v => addPlace(targetSet, v));
+  else if (typeof values === 'string') values.split(/\r?\n|\|/).forEach(v => addPlace(targetSet, v));
+}
+function addRawWords(targetSet, values) {
+  if (!values) return;
+  if (Array.isArray(values)) values.forEach(v => { const x = canonical(v); if (x) targetSet.add(x); });
+  else if (typeof values === 'string') values.split(/\r?\n|\|/).forEach(v => { const x = canonical(v); if (x) targetSet.add(x); });
+}
+function readJsonIfExists(file) {
+  try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return null; }
+}
+function loadPlainList(file, targetSet, mode = 'raw') {
+  try {
+    const text = fs.readFileSync(file, 'utf8');
+    const add = mode === 'place' ? addWords : addRawWords;
+    add(targetSet, text);
+    console.log(`Loaded ${file}`);
+  } catch {}
+}
+function loadGeoNamesDump(file, targetSets) {
+  // Supports GeoNames allCountries.txt / cities*.txt format.
+  // We only import populated places and administrative divisions, not streets, shops, buildings or landmarks.
+  try {
+    const text = fs.readFileSync(file, 'utf8');
+    let added = 0;
+    for (const line of text.split(/\r?\n/)) {
+      if (!line || line.startsWith('#')) continue;
+      const cols = line.split('\t');
+      const name = cols[1];
+      const ascii = cols[2];
+      const alternates = cols[3] || '';
+      const featureClass = cols[6];
+      const featureCode = cols[7];
+      if (!name || !featureClass) continue;
+      // P = populated place. A = country/state/province/region/admin division.
+      if (featureClass === 'P') {
+        addPlace(targetSets.cities, name); addPlace(targetSets.cities, ascii);
+        for (const alt of alternates.split(',').slice(0, 25)) addPlace(targetSets.cities, alt);
+        added++;
+      } else if (featureClass === 'A' && /^ADM|PCL/.test(featureCode || '')) {
+        const target = /^PCL/.test(featureCode || '') ? targetSets.countries : targetSets.regions;
+        addPlace(target, name); addPlace(target, ascii);
+        for (const alt of alternates.split(',').slice(0, 25)) addPlace(target, alt);
+        added++;
+      }
+    }
+    console.log(`Loaded GeoNames places from ${file}: ${added}`);
+  } catch {}
+}
+
+function addPlace(set, value) {
+  const v = canonical(value);
+  if (!v || v.length < 2) return;
+  set.add(v);
+  const noParens = canonical(v.replace(/\([^)]*\)/g, ''));
+  if (noParens && noParens !== v) set.add(noParens);
+  const beforeComma = canonical(v.split(',')[0]);
+  if (beforeComma && beforeComma.length >= 3) set.add(beforeComma);
+  // Common city short-name forms: Frankfurt am Main -> Frankfurt, Newcastle upon Tyne -> Newcastle.
+  const short = canonical(v.split(/\s+(am|upon|on|by|under|sur|del|de|da|do|du|la|le|el)\s+/i)[0]);
+  if (short && short.length >= 4) set.add(short);
+}
+
 
 const names = list(`
 aaron|abdul|abena|abigail|adam|adele|adwoa|aisha|alex|alexander|alexandra|alice|amanda|ama|amelia|amina|andrew|angela|anthony|antonio|arthur|asma|barbara|benjamin|brian|caleb|camila|charles|charlotte|chloe|christian|christopher|daniel|david|diana|dorcas|edward|elijah|elizabeth|ella|emily|emma|emmanuel|esther|eva|felix|francis|frank|george|grace|hannah|harry|henry|isaac|isabella|jack|jacob|james|janet|jasmine|jerome|john|jonathan|joseph|joshua|julia|juliet|karen|kwame|kofi|kojo|kweku|kwesi|lawrence|leah|liam|lily|lucas|lucy|mabel|maria|mary|michael|michelle|mohammed|nathan|nicholas|oliver|olivia|patricia|paul|peter|philip|priscilla|rachael|rebecca|richard|robert|rose|sarah|samuel|sandra|sophia|stephen|susan|thomas|victoria|william|yaa|yaw|yvonne|zachary
@@ -38,6 +105,11 @@ abacus|adhesive|aerosol can|album cover|amplifier|ankle boot|armchair|armour|art
 const objectHeads = list(`food|camera|phone|controller|charger|bottle|bag|shoe|book|pen|pencil|laptop|computer|tablet|watch|ring|chair|table|cup|mug|plate|fork|spoon|knife|coat|jacket|hat|helmet|ball|toy|box|car|bike|bicycle|ink|kite|key|keyboard|kettle|lamp|paper|brush|pan|pot|jar|can|container|shirt|boot|glove|sock|scarf|blanket|pillow|towel|cable|wire|screen|monitor|speaker|microphone|guitar|drum|violin|racket|bat|stick|rod|wheel|card|coin|cash|bowl|dish|tray|case|folder|file|notebook|newspaper|magazine|soap|perfume|lotion|shampoo|detergent|oil|paint|glue|tape|string|yarn|thread|rope|tool|hammer|saw|drill|spanner|wrench|screwdriver|mower|cleaner|machine|printer|projector|router|remote|fan|clock|mirror|vase|wallet|purse|suitcase|luggage|backpack|basket|bucket|bin|trolley|cart|stroller|canoe|boat|skateboard|scooter|motorbike|train|airplane|drone|ticket|passport|badge|banner|sign|poster`);
 const brands = list(`nikon|canon|sony|samsung|apple|dell|hp|lenovo|asus|acer|xbox|playstation|nintendo|lg|tesco|sainsburys|asda|aldi|lidl|nike|adidas|puma|gucci|lv|louis vuitton|tom ford|dior|ysl|valentino|jbl|bose|beats|logitech|dyson|shark|panasonic|philips|bosch|whirlpool|lego|barbie|hot wheels|fender|yamaha`);
 
+
+// Extra seeded databases. These are intentionally broad, and the app also supports
+// adding even larger local files in /data without changing code.
+addRawWords(names, `aaliyah|abbas|abdullah|abe|abraham|ada|adams|ade|adebayo|adeola|adesua|adelaide|adeline|adrian|agatha|agnes|ahmed|akosua|akua|alan|albert|alberta|aldo|alejandro|alfred|ali|alicia|aline|alison|allan|alonso|alvin|alyssa|amara|amber|ameen|amir|anastasia|anderson|andre|andrea|angel|angelina|anita|ann|anna|anne|annie|ansah|anton|april|araba|archie|ariana|ariel|arnold|ashley|asiedu|asmaa|augustine|ava|avery|ayan|ayesha|bailey|balogun|becky|bella|bernard|bernice|bertie|beth|betty|beverly|blessing|brandon|brenda|bridget|brittany|brooke|bryan|caitlin|cameron|carla|carl|caroline|carolyn|casey|cassandra|catherine|cecilia|celine|chelsea|cheryl|chidera|chinedu|chloe|chris|christina|claire|clara|claudia|clement|clifford|cynthia|daisy|damian|danielle|danny|daphne|darren|deborah|dennis|desmond|doris|douglas|dylan|edem|edgar|edith|edmund|edna|edwin|eileen|elaine|eleanor|elena|eli|eliana|elise|ella|ellen|elliot|elsie|elvis|enoch|eric|erica|erin|ernest|ethel|eugene|eunice|eva|eve|ezra|faith|fatima|fiona|florence|fred|frederick|gabriel|gabriella|gareth|gary|geoffrey|georgia|gerald|geraldine|gideon|gilbert|gloria|godwin|gordon|graham|gregory|hadassah|hafsa|harriet|hazel|helen|helena|herbert|hillary|howard|hussein|ian|ibrahim|idris|ike|imogen|irene|isaiah|ismael|ivan|ivy|jackie|jade|jamal|jared|jasper|jean|jeffrey|jennifer|jenny|jessica|joanna|joanne|joel|joey|joy|joyce|judith|judy|justin|kafui|kamal|kate|katherine|kathryn|keith|kelly|kenneth|kevin|kim|kimberly|kingsley|kobina|kobby|koku|korkor|kristen|kristin|kwaku|kyle|larry|laura|lauren|lawson|leila|lena|leo|leon|leonard|leslie|levi|linda|lindsay|lisa|lois|lorraine|louise|luke|lydia|malcolm|marcus|margaret|margot|marian|marie|marilyn|mark|martha|martin|matilda|maureen|max|maxwell|melissa|mercy|miriam|mohamed|mohammad|mohammed|morgan|musa|nadia|naomi|natalie|nathaniel|neil|nelson|nigel|nina|noah|nora|norman|oscar|owen|pamela|patrick|paula|pauline|pearl|precious|quentin|quincy|ralph|raymond|regina|renee|rita|ronald|ruth|sabrina|sally|samantha|sampson|sebastian|selina|serena|seth|sharon|sheila|simon|solomon|stella|stephanie|steven|sylvia|teresa|terry|theodore|theresa|timothy|tina|toby|tony|tracy|vanessa|vera|veronica|vincent|vivian|walter|wendy|wilfred|winston|xavier|yasmine|yusif|yusuf|zara|zoe`);
+addRawWords(physicalObjects, `airpods|apple watch|baby food|bagel|basketball hoop|binder|bird cage|biro|blazer|bluetooth speaker|bread knife|bus ticket|camera lens|candle holder|canvas bag|car charger|car tyre|cell phone|cereal|charging cable|chewing gum|chopping board|clothes hanger|coffee beans|contact lens|cooking pot|cushion cover|desk lamp|digital camera|door key|duffel bag|electric guitar|energy drink|exercise bike|face cream|football boots|gaming chair|gaming mouse|garden hose|gift card|glass bottle|glue stick|goalpost|hair clip|hand cream|hand towel|hooded jacket|ink cartridge|inkpot|iron board|kitchen towel|kite string|laptop charger|laundry basket|lemonade bottle|marker pen|measuring cup|memory stick|micro sd card|milk carton|mouse pad|neck pillow|nikon lens|paint roller|phone case|phone charger|plastic fork|remote control|ring binder|running shoes|school tie|shopping trolley|shower gel|sim tray|sketchbook|soccer boot|soup bowl|sports bag|suit trousers|sweatshirt|table lamp|tea bag|tennis shoe|toothpaste tube|train ticket|tv remote|water glass|whiteboard marker|wireless mouse|wool hat`);
 const continents = list('africa|antarctica|asia|europe|north america|south america|australia|oceania');
 const countries = list(`
 afghanistan|albania|algeria|andorra|angola|argentina|armenia|australia|austria|azerbaijan|bahamas|bahrain|bangladesh|barbados|belarus|belgium|belize|benin|bhutan|bolivia|botswana|brazil|bulgaria|burkina faso|burundi|cambodia|cameroon|canada|chad|chile|china|colombia|congo|costa rica|croatia|cuba|cyprus|czech republic|denmark|djibouti|dominica|dominican republic|ecuador|egypt|england|eritrea|estonia|ethiopia|fiji|finland|france|gabon|gambia|georgia|germany|ghana|greece|grenada|guatemala|guinea|guyana|haiti|honduras|hungary|iceland|india|indonesia|iran|iraq|ireland|israel|italy|jamaica|japan|jordan|kazakhstan|kenya|kuwait|latvia|lebanon|liberia|libya|lithuania|luxembourg|madagascar|malawi|malaysia|mali|malta|mexico|moldova|monaco|mongolia|morocco|mozambique|namibia|nepal|netherlands|new zealand|nicaragua|niger|nigeria|north korea|norway|pakistan|panama|paraguay|peru|philippines|poland|portugal|qatar|romania|russia|rwanda|saudi arabia|scotland|senegal|serbia|singapore|slovakia|slovenia|somalia|south africa|south korea|spain|sri lanka|sudan|sweden|switzerland|syria|taiwan|tanzania|thailand|togo|tunisia|turkey|uganda|ukraine|united kingdom|uk|united states|usa|america|uruguay|venezuela|vietnam|wales|yemen|zambia|zimbabwe|ivory coast|cote divoire
@@ -51,19 +123,55 @@ ashanti region|greater accra region|volta region|eastern region|western region|c
 // Explicit banned place examples: broad macro-areas and shops are not allowed.
 const bannedPlaces = list(`east africa|west africa|north africa|southern africa|sub-saharan africa|middle east|caribbean|latin america|scandinavia|balkans|southeast asia|south asia|east asia|tesco|asda|lidl|aldi|mcdonalds|kfc|shop|mall|supermarket`);
 
+const streetOrBusinessWords = list(`street|road|avenue|lane|drive|close|way|boulevard|high street|shopping centre|shopping center|mall|shop|store|restaurant|hotel|airport|terminal|station|market|stadium|school|university|church|mosque|temple|hospital|park|square|bridge|museum|tower|building|campus|branch`);
+const placeAliases = list(`frankfurt|frankfurt am main|gabasawa|newcastle|newcastle upon tyne|washington dc|washington d c|los angeles|new york|mexico city|sao paulo|rio de janeiro|cape town|hong kong|abu dhabi|addis ababa|buenos aires|dar es salaam|kuala lumpur|san francisco|st petersburg|saint petersburg|ho chi minh city|phnom penh|tel aviv|la paz|port of spain|port au prince|port harcourt|kumasi|accra|colchester|london|manchester|birmingham`);
+for (const p of placeAliases) cities.add(p);
+
+
 // Large offline place database, loaded from the country-state-city package when installed.
 // It gives broad city/country/state coverage without accepting streets or shops.
 if (Country && State && City) {
+  console.log('Loading country-state-city offline geo database...');
   for (const c of Country.getAllCountries()) {
-    if (c.name) countries.add(c.name.toLowerCase());
+    addPlace(countries, c.name);
     if (c.isoCode) countries.add(c.isoCode.toLowerCase());
   }
-  for (const st of State.getAllStates()) {
-    if (st.name) regions.add(st.name.toLowerCase());
+  for (const st of State.getAllStates()) addPlace(regions, st.name);
+  for (const city of City.getAllCities()) addPlace(cities, city.name);
+}
+
+// Optional local mega-database support. Add GeoNames files into /data/geonames/
+// and restart the server; the game will import cities, countries, states, provinces and regions.
+const dataDir = path.join(__dirname, 'data');
+const customPlaces = readJsonIfExists(path.join(dataDir, 'places.json'));
+if (customPlaces) { addWords(cities, customPlaces.cities); addWords(regions, customPlaces.regions); addWords(countries, customPlaces.countries); }
+const customNames = readJsonIfExists(path.join(dataDir, 'names.json'));
+if (customNames) { addRawWords(names, customNames.firstNames); addRawWords(names, customNames.surnames); addRawWords(names, customNames.names); }
+const customObjects = readJsonIfExists(path.join(dataDir, 'objects.json'));
+if (customObjects) { addRawWords(physicalObjects, customObjects.objects || customObjects); }
+loadPlainList(path.join(dataDir, 'names.txt'), names);
+loadPlainList(path.join(dataDir, 'objects.txt'), physicalObjects);
+loadPlainList(path.join(dataDir, 'animals.txt'), animals);
+loadGeoNamesDump(path.join(dataDir, 'geonames', 'allCountries.txt'), { cities, regions, countries });
+loadGeoNamesDump(path.join(dataDir, 'geonames', 'cities500.txt'), { cities, regions, countries });
+console.log(`Validation DB loaded: ${cities.size} cities/place names, ${regions.size} regions/states, ${countries.size} countries, ${names.size} names, ${physicalObjects.size} objects.`);
+
+function looksLikeGeographicalPlace(answer) {
+  const a = canonical(answer);
+  if (!a || a.length < 3 || a.length > 45) return false;
+  if (!/^[a-z][a-z '-]*$/.test(a)) return false;
+  if (bannedPlaces.has(a)) return false;
+  const words = a.split(' ');
+  if (words.length > 4) return false;
+  // Keep streets, shops, businesses and landmarks out. Cities/regions only.
+  for (const w of streetOrBusinessWords) {
+    if (a === w || a.endsWith(' ' + w) || a.includes(w + ' ')) return false;
   }
-  for (const city of City.getAllCities()) {
-    if (city.name && city.name.length > 1) cities.add(city.name.toLowerCase());
-  }
+  // Do not allow vague macro-area phrases like East Africa, West Asia, etc.
+  if (/^(north|south|east|west|central|northern|southern|eastern|western)\s+(africa|asia|europe|america|americas)$/.test(a)) return false;
+  // Relaxed city/region fallback: allows real-but-missing GeoNames/country-state-city entries like Gabasawa.
+  // It still blocks streets/shops through the filters above.
+  return true;
 }
 
 function maybeAddPluralObjects() {
@@ -103,17 +211,24 @@ function findCloseMatch(answer, sets, letter) {
   return best;
 }
 
+function singulariseObjectWord(a) {
+  if (physicalObjects.has(a)) return a;
+  if (a.endsWith('ies') && physicalObjects.has(a.slice(0, -3) + 'y')) return a.slice(0, -3) + 'y';
+  if (a.endsWith('es') && physicalObjects.has(a.slice(0, -2))) return a.slice(0, -2);
+  if (a.endsWith('s') && physicalObjects.has(a.slice(0, -1))) return a.slice(0, -1);
+  return null;
+}
 function objectLooksPhysicalPhrase(answer) {
   const a = canonical(answer);
   const parts = a.split(' ');
-  if (physicalObjects.has(a)) return true;
+  if (singulariseObjectWord(a)) return true;
   // Brand + physical head: Nikon camera, Samsung phone, Xbox controller.
-  if (parts.length >= 2 && parts.length <= 3 && brands.has(parts[0]) && objectHeads.has(parts[parts.length - 1])) return true;
+  if (parts.length >= 2 && parts.length <= 4 && brands.has(parts[0]) && (objectHeads.has(parts[parts.length - 1]) || physicalObjects.has(parts[parts.length - 1]))) return true;
   // Animal/food owner + physical head: cat food, dog bowl, fish tank.
-  if (parts.length >= 2 && parts.length <= 3 && (animals.has(parts[0]) || physicalObjects.has(parts[0])) && objectHeads.has(parts[parts.length - 1])) return true;
+  if (parts.length >= 2 && parts.length <= 4 && (animals.has(parts[0]) || physicalObjects.has(parts[0])) && (objectHeads.has(parts[parts.length - 1]) || physicalObjects.has(parts[parts.length - 1]))) return true;
   // Adjective/material + physical head: red ball, plastic bottle, leather bag.
-  const descriptors = list(`red|blue|green|black|white|yellow|pink|purple|orange|brown|grey|gray|gold|silver|metal|wooden|plastic|glass|paper|leather|cotton|wool|rubber|steel|iron|ceramic|digital|electric|wireless|portable|small|large|big|mini|smart|sports|school|office|kitchen|bathroom|garden|toy|baby`);
-  if (parts.length >= 2 && parts.length <= 3 && descriptors.has(parts[0]) && objectHeads.has(parts[parts.length - 1])) return true;
+  const descriptors = list(`red|blue|green|black|white|yellow|pink|purple|orange|brown|grey|gray|gold|silver|metal|wooden|plastic|glass|paper|leather|cotton|wool|rubber|steel|iron|ceramic|digital|electric|wireless|portable|small|large|big|mini|smart|sports|school|office|kitchen|bathroom|garden|toy|baby|cleaning|cooking|gaming|football|phone|laptop`);
+  if (parts.length >= 2 && parts.length <= 4 && descriptors.has(parts[0]) && (objectHeads.has(parts[parts.length - 1]) || physicalObjects.has(parts[parts.length - 1]))) return true;
   return false;
 }
 
@@ -143,6 +258,7 @@ function validateAnswer(category, answer, letter) {
     if (cities.has(a) || countries.has(a) || continents.has(a) || regions.has(a)) return { valid: true, typo: false, reason: 'Valid geographical place' };
     const close = findCloseMatch(a, [cities, countries, continents, regions], letter);
     if (close) return { valid: false, typo: true, reason: `Typo: did you mean ${titleCase(close.word)}?`, correctWord: close.word };
+    if (looksLikeGeographicalPlace(a)) return { valid: true, typo: false, reason: 'Accepted as a likely city/state/province/region' };
     return { valid: false, typo: false, reason: 'Only cities, countries, states/provinces/regions and continents count — not streets or shops' };
   }
 
@@ -168,23 +284,43 @@ function scoreRound(room) {
   if (room.state === 'results' || room.state === 'ended') return;
   room.state = 'results'; room.roundEndsAt = null; clearTimeout(room.roundTimer); clearInterval(room.rushTimer);
   const answersByCategory = Object.fromEntries(CATEGORIES.map(c => [c, new Map()]));
+  const validationCache = new Map();
+  const getCheck = (category, raw) => {
+    const key = `${category}:${canonical(raw)}`;
+    if (!validationCache.has(key)) validationCache.set(key, validateAnswer(category, raw, room.letter));
+    return validationCache.get(key);
+  };
+  const intendedKey = (category, raw, check) => {
+    if (check.valid) return canonical(raw);
+    if (check.typo && check.correctWord) return canonical(check.correctWord);
+    return null;
+  };
+
+  // Count valid answers and close misspellings together so typo points are based on
+  // what the player would have scored if they had spelt it correctly.
   for (const [playerId, answers] of Object.entries(room.answers)) {
     for (const category of CATEGORIES) {
-      const value = canonical(answers[category]); const check = validateAnswer(category, value, room.letter);
-      if (!check.valid) continue;
-      if (!answersByCategory[category].has(value)) answersByCategory[category].set(value, []);
-      answersByCategory[category].get(value).push(playerId);
+      const raw = answers[category];
+      const check = getCheck(category, raw);
+      const key = intendedKey(category, raw, check);
+      if (!key) continue;
+      if (!answersByCategory[category].has(key)) answersByCategory[category].set(key, []);
+      answersByCategory[category].get(key).push(playerId);
     }
   }
+
   room.roundNumber = (room.roundNumber || 0) + 1;
   const results = [];
   for (const player of room.players.values()) {
     const answers = room.answers[player.id] || {}; let roundScore = 0; const breakdown = {};
     for (const category of CATEGORIES) {
-      const raw = answers[category] || ''; const value = canonical(raw); const check = validateAnswer(category, raw, room.letter);
+      const raw = answers[category] || ''; const check = getCheck(category, raw);
+      const key = intendedKey(category, raw, check);
+      const count = key ? (answersByCategory[category].get(key)?.length || 0) : 0;
+      const basePoints = count > 1 ? 5 : 10;
       let points = 0; let status = check.reason;
-      if (check.valid) { const count = answersByCategory[category].get(value)?.length || 0; points = count > 1 ? 5 : 10; status = count > 1 ? 'Duplicate valid answer' : 'Unique valid answer'; }
-      else if (check.typo) { points = -1; status = check.reason; }
+      if (check.valid) { points = basePoints; status = count > 1 ? 'Duplicate valid answer' : 'Unique valid answer'; }
+      else if (check.typo) { points = basePoints - 1; status = `${check.reason} · spelling penalty -1`; }
       roundScore += points;
       breakdown[category] = { answer: titleCase(raw), points, originalPoints: points, status, disputed: false, dispute: null };
     }
@@ -243,7 +379,7 @@ io.on('connection', (socket) => {
     const result = room.results.find(r => r.id === playerId); if (!result || !CATEGORIES.includes(category)) return cb?.({ ok: false, error: 'Answer not found' });
     const key = `${playerId}:${category}`; if ((room.disputes || []).some(d => d.key === key)) return cb?.({ ok: false, error: 'Already disputed' });
     const challenger = room.players.get(socket.id)?.name || 'Someone';
-    const dispute = { key, playerId, playerName: result.name, category, answer: result.breakdown[category].answer, currentPoints: result.breakdown[category].points, challengedBy: challenger, createdAt: Date.now(), yes: [], no: [], status: 'open' };
+    const dispute = { key, playerId, playerName: result.name, category, answer: result.breakdown[category].answer, currentPoints: result.breakdown[category].points, challengedBy: challenger, challengedById: socket.id, createdAt: Date.now(), yes: [], no: [], status: 'open' };
     result.breakdown[category].disputed = true; result.breakdown[category].dispute = dispute;
     room.disputes.push(dispute); cb?.({ ok: true }); emitRoom(room);
   });
@@ -251,8 +387,10 @@ io.on('connection', (socket) => {
   socket.on('dispute:vote', ({ key, vote }, cb) => {
     const room = getRoom(socket.data.roomCode); if (!room || room.state !== 'results') return cb?.({ ok: false, error: 'No active voting' });
     const d = (room.disputes || []).find(x => x.key === key); if (!d || d.status !== 'open') return cb?.({ ok: false, error: 'Vote closed' });
+    if (d.challengedById === socket.id) return cb?.({ ok: false, error: 'You created this challenge, so you cannot vote on it' });
     d.yes = d.yes.filter(id => id !== socket.id); d.no = d.no.filter(id => id !== socket.id); (vote === 'yes' ? d.yes : d.no).push(socket.id);
-    const needed = Math.max(1, Math.ceil(room.players.size / 2));
+    const eligibleVoters = Math.max(1, room.players.size - 1);
+    const needed = Math.max(1, Math.ceil(eligibleVoters / 2));
     if (d.yes.length >= needed || d.no.length >= needed) {
       d.status = 'closed'; d.passed = d.yes.length > d.no.length;
       const result = room.results.find(r => r.id === d.playerId); const item = result?.breakdown?.[d.category];
