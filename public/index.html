@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Category Rush</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="background-orb orb-one"></div>
+  <div class="background-orb orb-two"></div>
+
+  <main class="app">
+    <section id="joinScreen" class="screen active hero-card">
+      <div class="brand-badge">⚡ Multiplayer word battle</div>
+      <h1>Category Rush</h1>
+      <p class="tagline">Think fast. Score big.</p>
+      <div class="join-box glass">
+        <label>Your name</label>
+        <input id="playerName" maxlength="18" placeholder="e.g. Kofi" />
+        <div class="button-grid">
+          <button id="createRoomBtn" class="primary">Create room</button>
+          <button id="joinRoomBtn" class="secondary">Join room</button>
+        </div>
+        <input id="roomCodeInput" maxlength="4" placeholder="Room code" class="room-input" />
+        <p id="joinError" class="error"></p>
+      </div>
+    </section>
+
+    <section id="gameScreen" class="screen">
+      <header class="topbar glass">
+        <div>
+          <p class="tiny">Room code</p>
+          <h2 id="roomCode">----</h2>
+        </div>
+        <div class="top-actions">
+          <button id="copyCodeBtn" class="ghost">Copy code</button>
+          <button id="startBtn" class="primary hidden">Start round</button>
+          <button id="endGameBtn" class="danger hidden">End game</button>
+        </div>
+      </header>
+
+      <section class="status-grid">
+        <div class="letter-card glass">
+          <p class="tiny">Random letter</p>
+          <div id="letterDisplay" class="letter">?</div>
+          <div id="usedLetters" class="used-letters">Used: none</div>
+        </div>
+        <div class="timer-card glass">
+          <p class="tiny">Round status</p>
+          <div id="roundStatus" class="status-text">Waiting in lobby</div>
+          <div id="timer" class="timer">--</div>
+        </div>
+      </section>
+
+      <section id="rushBanner" class="rush-banner hidden">
+        <p id="rushText">Rush activated!</p>
+        <div id="rushCountdown">5</div>
+      </section>
+
+      <section class="answer-card glass">
+        <div class="card-heading">
+          <div>
+            <p class="tiny">Your answers</p>
+            <h3>Fill all 4 categories</h3>
+          </div>
+          <span id="autoSaveBadge" class="auto-badge">Auto-saves</span>
+        </div>
+
+        <div class="answers-grid">
+          <label>👤 Name <input id="answerName" placeholder="Name" /></label>
+          <label>🦁 Animal <input id="answerAnimal" placeholder="Animal" /></label>
+          <label>🌍 Place <input id="answerPlace" placeholder="City, country, continent or region" /></label>
+          <label>📦 Object <input id="answerObject" placeholder="Object" /></label>
+        </div>
+
+        <button id="rushBtn" class="rush-btn" disabled>RUSH!</button>
+        <p id="formHint" class="hint">Complete all four answers. Your answers save automatically. Objects must be physical things you can touch. Places must be cities, states/regions, countries or continents.</p>
+      </section>
+
+      <section class="layout-two">
+        <div class="glass panel">
+          <h3>Players</h3>
+          <div id="playerList" class="player-list"></div>
+        </div>
+        <div class="glass panel">
+          <h3>Leaderboard</h3>
+          <div id="leaderboard" class="leaderboard"></div>
+        </div>
+      </section>
+
+      <section id="rulesPanel" class="glass panel rules-panel">
+        <h3>Rules</h3>
+        <p>Name: checked against a built-in names list, with likely real names accepted as Forbears-style guidance.</p>
+        <p>Place: only cities, states/regions, countries and continents. Shops and broad areas like East Africa do not count.</p>
+        <p>Object: only proper physical objects you can touch. Examples like Cat food or Nikon camera can count.</p>
+        <p>If you think the game marked an answer unfairly, press Challenge and players can vote.</p>
+      </section>
+
+      <section id="resultsPanel" class="glass panel hidden">
+        <div class="card-heading">
+          <h3>Round results</h3>
+          <button id="nextRoundBtn" class="primary hidden">Next round</button>
+        </div>
+        <div id="resultsList" class="results-list"></div>
+      </section>
+
+      <section id="finalPanel" class="glass panel hidden">
+        <h3>Final table</h3>
+        <div id="finalTable" class="final-table"></div>
+      </section>
+    </section>
+  </main>
+
+
+  <section id="challengeModal" class="challenge-modal hidden" aria-live="assertive">
+    <div class="challenge-card glass">
+      <button id="closeChallengeModal" class="modal-close" type="button">×</button>
+      <p class="tiny">Live challenge</p>
+      <h2>⚠️ Answer challenged</h2>
+      <p id="challengeModalText" class="challenge-text"></p>
+      <div id="challengeModalVotes" class="modal-votes"></div>
+      <p class="hint">Everyone can vote. Majority decides whether the answer should count.</p>
+    </div>
+  </section>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="script.js"></script>
+</body>
+</html>
